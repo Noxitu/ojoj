@@ -1,0 +1,5 @@
+#!/bin/sh
+dir=`dirname "$0"`
+g++ -O2 --std=c++11 "$dir/ojoj_entry_point.o" "$1" -o "$2"
+
+#g++ "$1" -o "$2"

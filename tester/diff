@@ -1,0 +1,7 @@
+#!/bin/sh
+# "$1" is user output
+# "$2.in" is test input
+
+#diff -wd "$1" "$2.out"
+
+wdiff "$1" "$2.out"
