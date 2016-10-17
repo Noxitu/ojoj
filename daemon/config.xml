@@ -1,0 +1,15 @@
+<ojoj.daemon.config>
+  <name>Instance #1</name>
+
+  <web>
+    <login>Tester</login>
+    <password>tets2</password>
+    <url>https://quiet-temple-6701.herokuapp.com/</url>
+    <interval>5</interval>
+  </web>
+  
+  <tmp>/tmp</tmp>
+  
+  <tasks>C:\cygwin64\home\Grzegorz\ojoj\tasks</tasks>
+  <tasks>C:\cygwin64\home\Grzegorz\contests\amppz\2002\dane_testowe</tasks>
+</ojoj.daemon.config>

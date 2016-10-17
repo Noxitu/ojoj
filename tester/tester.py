@@ -1,142 +1,127 @@
 #!/usr/bin/python
 
-import os.path, subprocess
+import os, subprocess
+import events
 
-BASEDIR, filename = os.path.split(os.path.abspath(__file__))
+class Paths:
+    user_app = '{tmp_dir}/ojoj-user-app'
+    compiler_output = '{tmp_dir}/ojoj-compiler-output.txt'
+    judge_app = '{tester_dir}/ojoj_judge'
+    judge_output = '{tmp_dir}/ojoj-judge-output.txt'
+    user_output = '{tmp_dir}/ojoj-user-output.txt'
 
-class MissingFile(Exception):
-	pass
+class OjojCodes:
+    AC = ('AC', 'Accepted')
+    WA = ('WA', 'Wrong Answer')
+    TLE = ('TLE', 'Time Limit Exceeded')
+    RE = ('RE', 'Runtime Error')
+    NZEC = ('NZEC', 'Non-zero Exit Code')
+    CE = ('CE', 'Compilation Error')
+    UnknownJudgeStatus = ('?', 'Unknown Judge Status')
+    
+    short = lambda code : code[0]
+    long = lambda code : code[1]
+    
+    
+JudgeCodes = {1: OjojCodes.TLE, 3: OjojCodes.RE, 4: OjojCodes.NZEC}
 
-JUDGE_CODES = {1: 'TLE', 3: 'RE', 4: 'NZEC'}
+tester_dir, _ = os.path.split(os.path.abspath(__file__))
 
-class AttributeDict(dict): 
-    __getattr__ = dict.__getitem__
-    __setattr__ = dict.__setitem__
+class Language:
+    def __init__(self, path):
+        self.path = path
+        self.name = os.path.basename(path)[:-5]
+        self.ext = ''
+        for line in open(path):
+            if line.startswith('#ext: '):
+                self.ext = line.split()[-1]
+                break
 
-def Test(args):
-	if isinstance(args, dict):
-		args = AttributeDict(args)
-		
-	if args.verify[0] == '.':
-		args.verify = BASEDIR+args.verify[1:]
+languages = os.listdir(os.path.join(tester_dir, 'languages'))
+languages = [ Language(os.path.join(tester_dir, 'languages', filename)) for filename in languages if filename.endswith('.lang') ]
+languages = { lang.name: lang for lang in languages if lang }
 
-	with open('/dev/null', 'w') as nullfd:
-		if not os.path.isdir(args.tmp):
-			raise MissingFile('Invalid temporary directory: '+args.tmp)
+print('Found languages: {}'.format(', '.join(languages.keys())))
 
-		yield { 'event': 'compilation' }
+def parse_cpu(cpu):
+    if cpu[-2:] == 'ms': return float(cpu[:-2])/1000
+    if cpu[-1:] == 's': return float(cpu[:-1])
+    raise Exception('Invalid CPU limit')
+    
+def parse_mem(cpu):
+    if cpu[-1:] == 'K': return int(float((cpu[:-1])))
+    if cpu[-1:] == 'M': return int(1024*float((cpu[:-1])))
+    if cpu[-1:] == 'G': return int(1024*1024*float((cpu[:-1])))
+    raise Exception('Invalid MEM limit')
+   
+def flow(compiler, source_path, task, config):
+    vars = {
+        'tester_dir': tester_dir,
+        'task_dir': task.task_dir,
+    }
+    vars.update(config)
 
+    if not os.path.isdir(vars['tmp_dir']):
+        raise Exception('Invalid temporary directory: {}'.format(vars['tmp_dir']))
 
-		compiler = BASEDIR+'/languages/'+args.lang+'.lang'
-		if not os.path.isfile(compiler):
-			raise MissingFile('Compiler file is missing: ' + compiler)
+    yield events.Compiling()
+    
+    app = Paths.user_app.format(**vars)
+    with open(Paths.compiler_output.format(**vars), 'w') as output:
+        cmd = [compiler.path, source_path, app]
+        compiled = subprocess.call(cmd, stdout=output, stderr=subprocess.DEVNULL)
+    
+    if compiled != 0:
+            yield events.Failure(OjojCodes.CE)
+            return
 
-		if not os.path.isfile(args.source):
-			raise MissingFile('Source file is missing: ' + args.source)
-	
-		with open(args.tmp+'/tester-compiler-output', 'w') as output:
-			compiled = subprocess.call( [ compiler, args.source, args.tmp+'/tester-user-app' ], stdout = output, stderr = output )
-		
-		if compiled != 0:
-			yield { 'event': 'failure', 'type': 'CE' }
-			return
+    yield events.Compiled()
+    
+    vars['out'] = Paths.user_output.format(**vars)
+    for test in task.tests:
+        test_vars = dict(vars)
+        test_vars.update({
+            'id': test['id']
+        })
+        
+        cpu_limit = parse_cpu(test['cpu'])
+        mem_limit = parse_mem(test['memory'])
+        yield events.TestRunning(id=test['id'], cpu_limit=cpu_limit, mem_limit=mem_limit)
+        
+        judge_output_path = Paths.judge_output.format(**test_vars)
+        with open(judge_output_path, 'w') as judge_output:
+            cmd = [
+                Paths.judge_app.format(**test_vars),
+                Paths.user_app.format(**test_vars),
+                str(cpu_limit),
+                str(mem_limit),
+                test['input'].format(**test_vars),
+                Paths.user_output.format(**test_vars) ]
+            status = subprocess.call( cmd, stdout=judge_output, stderr=subprocess.DEVNULL )
+            
+        if status != 0:
+            code = JudgeCodes.get(status, OjojCodes.UnknownJudgeStatus)
+            yield events.TestFailure(code)
+            yield events.Failure(code)
+            return
+            
+        cpu, mem = open(judge_output_path).read().split()
+        cpu = float(cpu)
+        mem = int(mem)
+        yield events.TestResources(cpu=cpu, mem=mem)
 
-		yield { 'event': 'compilation-ok' }
-
-		for path, cpu, mem in args.tests:
-			if path[-3:] == '.in':
-				path = path[:-3]
-
-			yield { 'event': 'test-running', 'name': path.split('/')[-1], 'cpu':cpu, 'mem':mem }
-
-			if not os.path.isfile(path+'.in'):
-				raise MissingFile('Test file is missing: ' + path)
-
-			with open(args.tmp+'/tester-judge-output', 'w') as output:
-				app = [ BASEDIR+'/ojoj_judge', args.tmp+'/tester-user-app', str(cpu), str(mem), path+'.in', args.tmp+'/tester-user-output' ]
-				status = subprocess.call( app, stdout = output, stderr = nullfd )
-
-			if status != 0:
-				yield { 'event': 'test-failure', 'type': JUDGE_CODES.get(status, 'ERROR') }
-				yield { 'event': 'failure', 'type': JUDGE_CODES.get(status, 'ERROR') }
-				return
-	
-			cpu, mem = open(args.tmp+'/tester-judge-output').read().split()
-			cpu = float(cpu)
-			mem = int(mem)
-			yield { 'event': 'test-res', 'cpu':cpu, 'mem': mem }
-
-		
-			status = subprocess.call( [args.verify, args.tmp+'/tester-user-output', path], stdout = nullfd, stderr = nullfd )
-			if status != 0:
-				yield { 'event': 'test-failure', 'type': 'WA' }
-				yield { 'event': 'failure', 'type': 'WA' }
-				return
-			yield { 'event': 'test-ok'}
-
-		yield { 'event': 'ok' }
-	
+        
+        cmd = [ arg.format(**test_vars) for arg in test['verify'] ]
+        status = subprocess.call( cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL )
+        if status != 0:
+            yield events.TestFailure(OjojCodes.WA)
+            yield events.Failure(OjojCodes.WA)
+            return
+        
+        yield events.TestOk()
+        
+    yield events.Accepted()
 
 if __name__ == '__main__':
-	import argparse
-	from sys import stdout
-
-	parser = argparse.ArgumentParser(description='Compile, run and verify code.')
-	parser.add_argument('source', metavar='source-path', help='source code to compile')
-	parser.add_argument('--lang', metavar='language', default="c++", help='compiler name [default c++]')
-	parser.add_argument('--verify', metavar='verify-path', default="./diff", help='application verifying output [default ./diff]')
-	parser.add_argument('--tmp', metavar='tmp-path', default="/tmp", help='temporary directory [default /tmp]')
-	parser.add_argument('tests', metavar='test-path', nargs='*', help='(test input .in file):(cpu limit[s]):(mem limit[MB])')
-	args = parser.parse_args()
-	args.tests = map(lambda x : x.split(':'), args.tests)
-	args.tests = map(lambda x : (x[0], x[1] if len(x) > 1 else 15, x[2] if len(x) > 2 else 256), args.tests)
-	args.tests = map(lambda (path,cpu,mem) : (path,float(cpu), int(round(float(mem)*1024))), args.tests)
-
-#	print args
-	try:
-#		0.1s / 5s
-#		print '+-------------+
-		for event in Test(args):
-			event = AttributeDict(event)
-			if event.event == 'compilation':
-				stdout.write('+-------------+--------+\n')
-				stdout.write('| Compilation |        |')
-				stdout.flush()
-			if event.event == 'failure' and event.type == 'CE':
-				stdout.write('\b\b\b\b\b\b\b\b\b\033[31m Failed \033[0m|\n')
-				stdout.write('+-------------+--------+\n')
-				os.system('cat '+args.tmp+'/tester-compiler-output')
-			if event.event == 'compilation-ok':
-				stdout.write('\b\b\b\b\b\b\b\b\b\033[32m   OK   \033[0m|\n')
-				stdout.write('+----------------------+-----------------+-----------------+--------+\n')
-			if event.event == 'test-running':
-				name = event.name[:15]
-				kcpu = event.mem < 10000
-				cpu = '%.1fs' % event.cpu if event.cpu < 5 else str(int(event.cpu))+'s'
-				mem = '%dK' % event.mem if kcpu else '%dM' % int(event.mem/1024)
-				if len(name) < 15: name += ' '*(15-len(name))
-				if len(cpu) < 5: cpu += ' '*(5-len(cpu))
-				if len(mem) < 5: mem += ' '*(5-len(mem))
-				stdout.write('| Test %15s |        / %5s  |        / %5s  |        |' % (name, cpu, mem))
-				stdout.flush()
-			if event.event == 'test-failure':
-				stdout.write('\b'*45 + '      - / %5s  |      - / %5s  |  \033[31m%4s\033[0m  |\n' % (cpu, mem, event.type))
-				stdout.write('+----------------------+-----------------+-----------------+--------+\n')
-			if event.event == 'test-res':
-				ucpu = '%.1fs' % event.cpu if event.cpu < 5 else str(int(event.cpu))+'s'
-				umem = '%dK' % event.mem if kcpu else '%dM' % int(event.mem/1024)
-				stdout.write('\b'*45 + '  %5s / %5s  |  %5s / %5s  |        |' % (ucpu, cpu, umem, mem))
-				stdout.flush()
-			if event.event == 'test-ok':
-				stdout.write('\b'*9 + '  \033[32mOK\033[0m    |\n')
-				stdout.write('+----------------------+-----------------+-----------------+--------+\n')
-			if event.event == 'ok':
-				stdout.write('|   Overall   |   \033[32mOK\033[0m   |\n')
-				stdout.write('+-------------+--------+\n')
-			if event.event == 'failure':
-				stdout.write('|   Overall   |  \033[31m%4s\033[0m  |\n' % event.type)
-				stdout.write('+-------------+--------+\n')
-
-	except MissingFile as e:
-		print '\033[31m'+e.message+'\033[0m'
-	
+    import main
+    main.main()

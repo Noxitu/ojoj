@@ -1,4 +1,5 @@
 #!/bin/sh
+#ext: .cpp
 dir=`dirname "$0"`
 g++ -O2 --std=c++11 "$dir/ojoj_entry_point.o" "$1" -o "$2"
 

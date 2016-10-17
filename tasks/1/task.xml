@@ -1,0 +1,14 @@
+<ojoj.task>
+  <id>ojoj/dodawanie</id>
+  <name>Dodawanie</name>
+  
+  <default
+    memory="32M"
+    cpu="1s"
+    verify="~/diff {out} ./{id}.out"
+    input="./{id}.in" />
+    
+  <test id="0" />
+  <test id="big" />
+  <test id="minus" />
+</ojoj.task>
