@@ -9,6 +9,7 @@ class Paths:
     judge_app = '{tester_dir}/ojoj_judge'
     judge_output = '{tmp_dir}/ojoj-judge-output.txt'
     user_output = '{tmp_dir}/ojoj-user-output.txt'
+    verify_output = '{tmp_dir}/ojoj-verify-output.txt'
 
 class OjojCodes:
     AC = ('AC', 'Accepted')
@@ -69,7 +70,7 @@ def flow(compiler, source_path, task, config):
     app = Paths.user_app.format(**vars)
     with open(Paths.compiler_output.format(**vars), 'w') as output:
         cmd = [compiler.path, source_path, app]
-        compiled = subprocess.call(cmd, stdout=output, stderr=subprocess.DEVNULL)
+        compiled = subprocess.call(cmd, stderr=output, stdout=subprocess.DEVNULL)
     
     if compiled != 0:
             yield events.Failure(OjojCodes.CE)
@@ -78,6 +79,8 @@ def flow(compiler, source_path, task, config):
     yield events.Compiled()
     
     vars['out'] = Paths.user_output.format(**vars)
+    
+    task_status = None
     for test in task.tests:
         test_vars = dict(vars)
         test_vars.update({
@@ -102,8 +105,12 @@ def flow(compiler, source_path, task, config):
         if status != 0:
             code = JudgeCodes.get(status, OjojCodes.UnknownJudgeStatus)
             yield events.TestFailure(code)
-            yield events.Failure(code)
-            return
+            if task_status is None:
+                task_status = code
+                
+            if not vars['test_all']:
+                break
+            continue
             
         cpu, mem = open(judge_output_path).read().split()
         cpu = float(cpu)
@@ -112,15 +119,25 @@ def flow(compiler, source_path, task, config):
 
         
         cmd = [ arg.format(**test_vars) for arg in test['verify'] ]
-        status = subprocess.call( cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL )
+        with open(Paths.verify_output.format(**test_vars), 'w') as verify_output:
+            status = subprocess.call( cmd, stdout=verify_output, stderr=verify_output )
+            
         if status != 0:
             yield events.TestFailure(OjojCodes.WA)
-            yield events.Failure(OjojCodes.WA)
-            return
+            if task_status is None:
+                task_status = OjojCodes.WA
+                
+            if not vars['test_all']:
+                break
+            continue
+                
         
         yield events.TestOk()
-        
-    yield events.Accepted()
+    
+    if task_status is None:
+        yield events.Accepted()
+    else:
+        yield events.Failure(task_status)
 
 if __name__ == '__main__':
     import main

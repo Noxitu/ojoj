@@ -10,6 +10,11 @@
   
   <tmp>/tmp</tmp>
   
+  <default
+    verbose="-v" />
+  
   <tasks>C:\cygwin64\home\Grzegorz\ojoj\tasks</tasks>
   <tasks>C:\cygwin64\home\Grzegorz\contests\amppz\2002\dane_testowe</tasks>
+  <tasks>C:\cygwin64\home\Grzegorz\contests\oi\xxiv\</tasks>
+  <tasks>D:\OjojTasks</tasks>
 </ojoj.daemon.config>

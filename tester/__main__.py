@@ -3,9 +3,26 @@ import argparse
 from sys import stdout
 import os.path
 
-from task import Task
+from task import Task, _make_test
 import tester, events
 from tester import OjojCodes
+
+#diff = '~/diff {{out}} {}.out'
+diff = 'python3 ~/decimal_diff.py -v {{out}} {}.out'
+
+def create_test(arg):
+    path = arg.split(':')[0]
+    id = os.path.basename(path).split('.')[0]
+    ret = {
+        'id': id,
+        'verify': diff.format(path[:-3]),
+        'memory': '512M',
+        'cpu': '10s',
+        'input': path
+    }
+    
+    _make_test(ret)
+    return ret
 
 def create_task(args):
     if len(args.tests) == 1:
@@ -16,7 +33,12 @@ def create_task(args):
         if os.path.basename(path) == 'info':
             print('Loading legacy "info" task...')
             return Task.from_info(path)
-    raise Exception('Not implemented!')
+    
+    task = Task()
+    task.id = task.name = 'unknown'
+    task.task_dir = args.tmp
+    task.tests = [create_test(t) for t in args.tests]
+    return task
             
 event_handlers = {}
 def event(type):
@@ -39,6 +61,8 @@ parser.add_argument('source', metavar='source-path', help='source code to compil
 parser.add_argument('--lang', metavar='language', default="c++", help='compiler name [default c++]')
 parser.add_argument('--verify', metavar='verify-path', default="./diff", help='application verifying output [default ./diff]')
 parser.add_argument('--tmp', metavar='tmp-path', default="/tmp", help='temporary directory [default /tmp]')
+parser.add_argument('--all', dest='all', action='store_true')
+parser.set_defaults(feature=True)
 parser.add_argument('tests', metavar='test-path', nargs='*', help='Each test should have format: <test input .in file>[:cpu limit(s)[:(mem limit(MB)]]. You can also provide single "task.xml" or "info" file.')
 args = parser.parse_args()
 
@@ -102,7 +126,7 @@ def default_handler(event):
     print(event)
 
 compiler = tester.languages[args.lang]
-for event in tester.flow(compiler, args.source, task, {'tmp_dir': args.tmp}):
+for event in tester.flow(compiler, args.source, task, {'tmp_dir': args.tmp, 'test_all': args.all}):
     handler = event_handlers.get(event.__class__, default_handler)
     handler(event)
      
